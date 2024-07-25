@@ -122,3 +122,5 @@ Dir.glob File.expand_path("../plugins/*/{Gemfile,PluginGemfile}", __FILE__) do |
 end
 
 gem "solid_queue", "~> 0.3.4"
+
+gem "mission_control-jobs", "~> 0.2.1"
