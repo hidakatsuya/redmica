@@ -1,0 +1,1 @@
+plugin :solid_queue
