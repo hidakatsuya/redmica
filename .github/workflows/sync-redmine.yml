@@ -1,0 +1,37 @@
+name: Sync to Redmine
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: '0 0 * * *'
+
+jobs:
+  open-pr-to-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: redmica
+
+      - uses: actions/checkout@v4
+        with:
+          repository: "redmine/redmine"
+          fetch-depth: 0
+          path: redmine
+
+      - run: echo "REDMINE_REF=$(cat .github/REDMINE_REF) >> $GITHUB_ENV"
+
+      - run: |
+          git filter-branch --msg-filter 'sed -e "s/\([[:punct:][:space:]]\)#\([0-9]*\)\([[:punct:][:space:]]\)/\1redmine-\2\3/g"' -f $REDMINE_REF..HEAD
+          git log --oneline $REDMINE_REF..HEAD
+          git format-patch $REDMINE_REF
+        working-directory: redmine
+        env:
+          FILTER_BRANCH_SQUELCH_WARNING: 1
+
+      - run: |
+          git switch -c sync-redmine/$REDMINE_REF
+          git am $GITHUB_WORKSPACE/redmine/*.patch
+          git log --oneline -n 50
+        working-directory: redmica
