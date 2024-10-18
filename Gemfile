@@ -2,7 +2,7 @@ source 'https://rubygems.org'
 
 ruby '>= 3.1.0', '< 3.4.0'
 
-gem 'rails', '7.2.1'
+gem 'rails', '7.2.1.1'
 gem 'rouge', '~> 4.2'
 gem 'mini_mime', '~> 1.1.0'
 gem "actionpack-xml_parser"
@@ -41,7 +41,7 @@ end
 
 # Optional gem for exporting the gantt to a PNG file
 group :minimagick do
-  gem 'mini_magick', '~> 4.13.0'
+  gem 'mini_magick', '~> 5.0.1'
 end
 
 # Optional Markdown support
@@ -95,6 +95,7 @@ end
 group :development do
   gem 'listen', '~> 3.3'
   gem 'yard', require: false
+  gem 'svg_sprite', require: false
 end
 
 group :test do
@@ -107,7 +108,7 @@ group :test do
   gem "capybara", ">= 3.39"
   gem 'selenium-webdriver', '>= 4.11.0'
   # RuboCop
-  gem 'rubocop', '~> 1.66.1', require: false
+  gem 'rubocop', '~> 1.67.0', require: false
   gem 'rubocop-performance', '~> 1.22.0', require: false
   gem 'rubocop-rails', '~> 2.26.0', require: false
 end
