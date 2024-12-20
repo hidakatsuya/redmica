@@ -143,4 +143,13 @@ module Propshaft
       File.join Rails.application.assets.resolver.prefix, path
     end
   end)
+
+  Processor.prepend(Module.new do
+    def process
+      puts "************ start Process#process: #{Time.now} ************"
+      res = super
+      puts "************ finish Process#process: #{Time.now} ************"
+      res
+    end
+  end)
 end
