@@ -1,0 +1,94 @@
+name: Sync to Redmine
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   # See https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule
+  #   - cron: "0 0 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  open-pr-to-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v5
+        with:
+          path: redmica
+
+      - uses: actions/checkout@v5
+        with:
+          repository: redmine/redmine
+          fetch-depth: 0
+          path: redmine
+
+      - name: Get the currently synced Redmine commit ID
+        run: |
+          echo "REDMINE_COMMIT_ID=$(cat .github/REDMINE_COMMIT_ID)" >> $GITHUB_ENV
+        working-directory: redmica
+
+      - name: Get the latest commit ID of Redmine
+        run: |
+          echo "REDMINE_LATEST_COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "REDMINE_LATEST_COMMIT_ID_SHORT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        working-directory: redmine
+
+      - name: Create patch files for the commits to be synced
+        run: |
+          # Replace Redmine issue number #1234 with redmine-1234 in the commits to be synced
+          git filter-branch --msg-filter 'sed -e "s/\([[:punct:][:space:]]\)#\([0-9]*\)\([[:punct:][:space:]]\)/\1redmine-\2\3/g"' -f $REDMINE_COMMIT_ID..HEAD
+
+          git log --oneline $REDMINE_COMMIT_ID..HEAD
+
+          # Create patch files
+          git format-patch $REDMINE_COMMIT_ID
+        working-directory: redmine
+        env:
+          FILTER_BRANCH_SQUELCH_WARNING: 1
+
+      - name: Set up Git
+        run: |
+          git config --global user.email "${{ vars.GIT_USER_EMAIL }}"
+          git config --global user.name "${{ vars.GIT_USER_NAME }}"
+
+      - name: Create a branch to sync to Redmine
+        run: |
+          git switch -c $PULL_REQUEST_BRANCH_NAME
+
+          # Apply the patch files to be synced
+          git am $GITHUB_WORKSPACE/redmine/*.patch
+
+          # Update the current synced commit ID to the latest commit ID of Redmine
+          echo "$REDMINE_LATEST_COMMIT_ID" > .github/REDMINE_COMMIT_ID
+
+          git commit -m "Synced to redmine/redmine@$REDMINE_LATEST_COMMIT_ID_SHORT" .github/REDMINE_COMMIT_ID
+
+          git log --oneline -n 50
+
+          git push origin $PULL_REQUEST_BRANCH_NAME
+        working-directory: redmica
+        env:
+          PULL_REQUEST_BRANCH_NAME: sync-to-redmine/${{ env.REDMINE_LATEST_COMMIT_ID_SHORT }}
+
+      - name: Create Pull Request
+        run: |
+          gh pr create \
+            --base master \
+            --head $PULL_REQUEST_BRANCH_NAME \
+            --title "$PULL_REQUEST_TITLE" \
+            --body "$PULL_REQUEST_BODY"
+        working-directory: redmica
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+          PULL_REQUEST_BRANCH_NAME: sync-to-redmine/${{ env.REDMINE_LATEST_COMMIT_ID_SHORT }}
+          PULL_REQUEST_TITLE: Sync to redmine/redmine@${{ env.REDMINE_LATEST_COMMIT_ID_SHORT }}
+          PULL_REQUEST_BODY: redmine/redmine@${{ env.REDMINE_LATEST_COMMIT_ID }}
