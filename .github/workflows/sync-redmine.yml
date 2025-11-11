@@ -1,0 +1,95 @@
+name: Sync Redmine Upstream
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   # Run every Monday at 00:00 UTC
+  #   - cron: "0 0 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  open-pr-to-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout RedMica
+        uses: actions/checkout@v5
+        with:
+          path: redmica
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Checkout Redmine upstream
+        uses: actions/checkout@v5
+        with:
+          repository: redmine/redmine
+          fetch-depth: 0
+          path: redmine
+
+      - name: Read current Redmine commit ID
+        working-directory: redmica
+        run: |
+          echo "REDMINE_COMMIT_ID=$(cat .github/REDMINE_COMMIT_ID)" >> $GITHUB_ENV
+
+      - name: Get latest Redmine commit ID
+        working-directory: redmine
+        run: |
+          echo "REDMINE_LATEST_COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "REDMINE_LATEST_COMMIT_ID_SHORT=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Check for new Redmine commits
+        working-directory: redmine
+        run: |
+          if [ "$(git rev-list --count $REDMINE_COMMIT_ID..HEAD)" -eq 0 ]; then
+            echo "REDMINE_HAS_DIFF=false" >> $GITHUB_ENV
+          else
+            echo "REDMINE_HAS_DIFF=true" >> $GITHUB_ENV
+          fi
+
+      - name: Configure Git author
+        if: env.REDMINE_HAS_DIFF == 'true'
+        run: |
+          git config --global user.email "app-ig8smx1j@users.noreply.github.com"
+          git config --global user.name "app-ig8smx1j"
+
+      - name: Generate Redmine patches
+        if: env.REDMINE_HAS_DIFF == 'true'
+        working-directory: redmine
+        env:
+          FILTER_BRANCH_SQUELCH_WARNING: 1
+        run: |
+          # Rewrite issue references from #1234 to redmine-1234 inside commit messages
+          git filter-branch --msg-filter 'sed -e "s/\([[:punct:][:space:]]\)#\([0-9]*\)\([[:punct:][:space:]]\)/\1redmine-\2\3/g"' -f $REDMINE_COMMIT_ID..HEAD
+
+          git log --oneline $REDMINE_COMMIT_ID..HEAD
+
+          # Emit one patch per commit
+          git format-patch $REDMINE_COMMIT_ID
+
+      - name: Apply patches to RedMica
+        if: env.REDMINE_HAS_DIFF == 'true'
+        working-directory: redmica
+        env:
+          TARGET_BRANCH: target-branch
+        run: |
+          git switch $TARGET_BRANCH
+
+          # Apply the upstream patches
+          git am $GITHUB_WORKSPACE/redmine/*.patch
+
+          # Store the newly synced Redmine commit ID
+          echo "$REDMINE_LATEST_COMMIT_ID" > .github/REDMINE_COMMIT_ID
+
+          git commit -m "Updated to redmine/redmine@$REDMINE_LATEST_COMMIT_ID_SHORT" .github/REDMINE_COMMIT_ID
+
+          git log --oneline -n 50
+
+          git push origin $TARGET_BRANCH
