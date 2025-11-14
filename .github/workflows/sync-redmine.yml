@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sync-redmine
+  cancel-in-progress: false
+
 jobs:
   sync-redmine:
     runs-on: ubuntu-latest
