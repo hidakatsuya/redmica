@@ -1,0 +1,117 @@
+name: Sync Redmine
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run every day at 8:00 JST
+    - cron: "0 23 * * *"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-redmine
+  cancel-in-progress: false
+
+jobs:
+  sync-redmine:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout RedMica
+        uses: actions/checkout@v5
+        with:
+          path: redmica
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Checkout Redmine
+        uses: actions/checkout@v5
+        with:
+          repository: redmine/redmine
+          fetch-depth: 0
+          path: redmine
+
+      - name: Ensure REDMINE_COMMIT_ID is set
+        run: |
+          if [ -z "${{ vars.REDMINE_COMMIT_ID }}" ]; then
+            echo "Repository variable REDMINE_COMMIT_ID is not set" >&2
+            exit 1
+          fi
+
+      - name: Get latest Redmine commit ID
+        working-directory: redmine
+        run: |
+          echo "REDMINE_LATEST_COMMIT_ID=$(git rev-parse HEAD)" >> ${GITHUB_ENV}
+
+      - name: Check for new Redmine commits
+        working-directory: redmine
+        run: |
+          if [ "$(git rev-list --count ${{ vars.REDMINE_COMMIT_ID }}..HEAD)" -eq 0 ]; then
+            echo "REDMINE_HAS_DIFF=false" >> ${GITHUB_ENV}
+          else
+            echo "REDMINE_HAS_DIFF=true" >> ${GITHUB_ENV}
+          fi
+
+      - name: Generate Redmine patches
+        if: env.REDMINE_HAS_DIFF == 'true'
+        working-directory: redmine
+        env:
+          FILTER_BRANCH_SQUELCH_WARNING: 1
+        run: |
+          # Rewrite issue references from #1234 to redmine-1234 inside commit messages
+          git filter-branch --msg-filter 'sed -e "s/\([[:punct:][:space:]]\)#\([0-9]*\)\([[:punct:][:space:]]\)/\1redmine-\2\3/g"' -f ${{ vars.REDMINE_COMMIT_ID }}..HEAD
+
+          git log --oneline ${{ vars.REDMINE_COMMIT_ID }}..HEAD
+
+          # Emit one patch per commit
+          git format-patch ${{ vars.REDMINE_COMMIT_ID }}
+
+      - name: Configure Git author
+        if: env.REDMINE_HAS_DIFF == 'true'
+        env:
+          GIT_USER_NAME: "redmica-sync[bot]"
+          GIT_USER_EMAIL: "redmica-sync[bot]@users.noreply.github.com"
+        run: |
+          git config --global user.email ${GIT_USER_EMAIL}
+          git config --global user.name ${GIT_USER_NAME}
+
+      - name: Apply patches to RedMica and update synced Redmine commit ID
+        if: env.REDMINE_HAS_DIFF == 'true'
+        working-directory: redmica
+        env:
+          TARGET_BRANCH: master
+          REDMINE_COMMIT_ID: ${{ vars.REDMINE_COMMIT_ID }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        shell: bash
+        run: |
+          update_redmine_commit_id() {
+            gh api \
+              --method PATCH \
+              -H "Accept: application/vnd.github+json" \
+              /repos/${GITHUB_REPOSITORY}/actions/variables/REDMINE_COMMIT_ID \
+              -f name=REDMINE_COMMIT_ID \
+              -f value="$1"
+          }
+
+          git switch ${TARGET_BRANCH}
+
+          # Apply the Redmine patches
+          git am ${GITHUB_WORKSPACE}/redmine/*.patch
+          git log --oneline -n 50
+
+          # Update REDMINE_COMMIT_ID repo variable to the new synced commit
+          update_redmine_commit_id "${REDMINE_LATEST_COMMIT_ID}"
+
+          if ! git push origin ${TARGET_BRANCH}; then
+            echo "git push failed"
+            update_redmine_commit_id "${REDMINE_COMMIT_ID}" || echo "Failed to roll back REDMINE_COMMIT_ID. Please verify the variable value manually."
+            exit 1
+          fi
