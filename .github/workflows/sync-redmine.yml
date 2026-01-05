@@ -3,8 +3,8 @@ name: Sync Redmine
 on:
   workflow_dispatch:
   schedule:
-    # Run every day at 8:00 JST
-    - cron: "0 23 * * *"
+    # Run every day at 7:30 JST
+    - cron: "30 22 * * *"
 
 permissions:
   contents: write
@@ -14,11 +14,21 @@ concurrency:
   group: sync-redmine
   cancel-in-progress: false
 
+env:
+  REDMICA_BRANCH: master
+
 jobs:
   sync-redmine:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check branch should be REDMICA_BRANCH
+        run: |
+          if [ "${GITHUB_REF_NAME}" != "${REDMICA_BRANCH}" ]; then
+            echo "This workflow must run on ${REDMICA_BRANCH}, got ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
       - name: Create GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
@@ -29,6 +39,7 @@ jobs:
       - name: Checkout RedMica
         uses: actions/checkout@v5
         with:
+          ref: ${{ env.REDMICA_BRANCH }}
           path: redmica
           token: ${{ steps.app-token.outputs.token }}
 
@@ -36,13 +47,23 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: redmine/redmine
+          ref: master
           fetch-depth: 0
           path: redmine
 
-      - name: Ensure REDMINE_LAST_SYNCED_COMMIT is set
+      - name: Validate REDMINE_LAST_SYNCED_COMMIT
+        working-directory: redmine
         run: |
           if [ -z "${{ vars.REDMINE_LAST_SYNCED_COMMIT }}" ]; then
             echo "Repository variable REDMINE_LAST_SYNCED_COMMIT is not set" >&2
+            exit 1
+          fi
+          if ! git cat-file -e "${{ vars.REDMINE_LAST_SYNCED_COMMIT }}^{commit}"; then
+            echo "REDMINE_LAST_SYNCED_COMMIT does not exist: ${{ vars.REDMINE_LAST_SYNCED_COMMIT }}" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${{ vars.REDMINE_LAST_SYNCED_COMMIT }}" HEAD; then
+            echo "REDMINE_LAST_SYNCED_COMMIT is not an ancestor of HEAD: ${{ vars.REDMINE_LAST_SYNCED_COMMIT }}" >&2
             exit 1
           fi
 
@@ -87,7 +108,6 @@ jobs:
         if: env.REDMINE_HAS_DIFF == 'true'
         working-directory: redmica
         env:
-          TARGET_BRANCH: master
           REDMINE_LAST_SYNCED_COMMIT: ${{ vars.REDMINE_LAST_SYNCED_COMMIT }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         shell: bash
@@ -101,7 +121,7 @@ jobs:
               -f value="$1"
           }
 
-          git switch ${TARGET_BRANCH}
+          git switch ${REDMICA_BRANCH}
 
           # Apply the Redmine patches
           git am ${GITHUB_WORKSPACE}/redmine/*.patch
@@ -110,7 +130,7 @@ jobs:
           # Update REDMINE_LAST_SYNCED_COMMIT repo variable to the new synced commit
           update_redmine_last_synced_commit "${REDMINE_HEAD_COMMIT}"
 
-          if ! git push origin ${TARGET_BRANCH}; then
+          if ! git push origin ${REDMICA_BRANCH}; then
             echo "git push failed"
             update_redmine_last_synced_commit "${REDMINE_LAST_SYNCED_COMMIT}" || echo "Failed to roll back REDMINE_LAST_SYNCED_COMMIT. Please verify the variable value manually."
             exit 1
