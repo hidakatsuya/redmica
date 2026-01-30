@@ -20,11 +20,7 @@
 module Redmine
   module WikiFormatting
     module Textile
-      SCRUBBERS = [
-        SyntaxHighlightScrubber.new,
-        Redmine::WikiFormatting::TablesortScrubber.new,
-        Redmine::WikiFormatting::CopypreScrubber.new
-      ]
+      ENHANCEMENTS_SCRUBBER = EnhancementsScrubber.new
 
       class Formatter
         include Redmine::WikiFormatting::SectionHelper
@@ -38,11 +34,17 @@ module Redmine
 
         def to_html(*rules)
           html = @filter.to_html(rules)
+          return html unless enhancements_needed?(html)
+
           fragment = Loofah.html5_fragment(html)
-          SCRUBBERS.each do |scrubber|
-            fragment.scrub!(scrubber)
-          end
+          fragment.scrub!(ENHANCEMENTS_SCRUBBER)
           fragment.to_s
+        end
+
+        private
+
+        def enhancements_needed?(html)
+          html.include?('<pre') || (Setting.wiki_tablesort_enabled? && html.include?('<table'))
         end
       end
 

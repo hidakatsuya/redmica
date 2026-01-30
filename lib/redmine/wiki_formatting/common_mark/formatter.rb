@@ -53,10 +53,8 @@ module Redmine
       }.freeze
 
       SANITIZER = SanitizationFilter.new
+      ENHANCEMENTS_SCRUBBER = EnhancementsScrubber.new
       SCRUBBERS = [
-        SyntaxHighlightScrubber.new,
-        Redmine::WikiFormatting::TablesortScrubber.new,
-        Redmine::WikiFormatting::CopypreScrubber.new,
         FixupAutoLinksScrubber.new,
         ExternalLinksScrubber.new,
         AlertsIconsScrubber.new
@@ -73,10 +71,17 @@ module Redmine
           html = MarkdownFilter.new(@text, PIPELINE_CONFIG).call
           fragment = Redmine::WikiFormatting::HtmlParser.parse(html)
           SANITIZER.call(fragment)
+          fragment.scrub!(ENHANCEMENTS_SCRUBBER) if enhancements_needed?(html)
           SCRUBBERS.each do |scrubber|
             fragment.scrub!(scrubber)
           end
           fragment.to_s
+        end
+
+        private
+
+        def enhancements_needed?(html)
+          html.include?('<pre') || (Setting.wiki_tablesort_enabled? && html.include?('<table'))
         end
       end
     end
