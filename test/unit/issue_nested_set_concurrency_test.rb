@@ -23,7 +23,6 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
   self.use_transactional_tests = false
 
   def setup
-    @connection_pool_mutex = Mutex.new
     skip if sqlite?
     if mysql?
       connection = ActiveRecord::Base.connection_db_config.configuration_hash.deep_dup
@@ -88,14 +87,14 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
       threads = []
       ids_to_remove.each_slice(10) do |ids|
         threads << Thread.new do
-          begin
-            with_thread_connection do
+          ActiveRecord::Base.connection_pool.with_connection do
+            begin
               ids.each do |id|
                 Issue.find(id).update(parent_id: nil)
               end
+            rescue => e
+              Thread.current[:exception] = e.message
             end
-          rescue => e
-            Thread.current[:exception] = e.message
           end
         end
       end
@@ -119,15 +118,17 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
 
   private
 
-  def threaded(count, &block)
+  def threaded(count, &)
     with_settings :notified_events => [] do
       threads = []
       count.times do |i|
         threads << Thread.new(i) do
-          begin
-            with_thread_connection(&block)
-          rescue => e
-            Thread.current[:exception] = e.message
+          ActiveRecord::Base.connection_pool.with_connection do
+            begin
+              yield
+            rescue => e
+              Thread.current[:exception] = e.message
+            end
           end
         end
       end
@@ -136,16 +137,5 @@ class IssueNestedSetConcurrencyTest < ActiveSupport::TestCase
         assert_nil thread[:exception]
       end
     end
-  end
-
-  def with_thread_connection(&)
-    # Active Record updates its connection lease registry when a thread obtains a
-    # connection for the first time, which can race when test threads start
-    # together.
-    @connection_pool_mutex.synchronize do
-      # Initialize this thread's connection lease before concurrent updates.
-      ActiveRecord::Base.connection_pool.with_connection { nil }
-    end
-    ActiveRecord::Base.connection_pool.with_connection(&)
   end
 end
