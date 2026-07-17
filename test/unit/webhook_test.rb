@@ -370,6 +370,9 @@ class WebhookTest < ActiveSupport::TestCase
     yield port, received
   ensure
     server&.shutdown
-    thread&.join
+    if thread && !thread.join(5)
+      thread.kill
+      thread.join
+    end
   end
 end
